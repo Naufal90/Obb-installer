@@ -6,6 +6,10 @@ android {
     namespace 'com.example.obbinstaller'
     compileSdk 35
 
+    dependencies {
+        implementation 'androidx.documentfile:documentfile:1.1.0'
+    }
+
     defaultConfig {
         applicationId 'com.example.obbinstaller'
         minSdk 33
