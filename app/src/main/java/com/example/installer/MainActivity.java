@@ -1,13 +1,14 @@
 package com.example.installer;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.DocumentsContract;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
@@ -16,7 +17,11 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Locale;
@@ -25,56 +30,149 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "OBB_INSTALLER";
 
-    private static final int PICK_OBB = 100;
-    private static final int PICK_OBB_FOLDER = 101;
+    private static final int PICK_OBB = 1001;
+    private static final int REQUEST_STORAGE = 1002;
 
-    private TextView status;
+    private TextView statusText;
     private TextView selectedFileText;
     private TextView packageText;
     private TextView progressText;
 
     private ProgressBar progressBar;
 
+    private Button permissionButton;
     private Button selectObbButton;
     private Button processButton;
 
-    private Uri obbUri;
-    private String obbName;
-    private String packageName;
+    private Uri selectedObbUri;
+    private String selectedObbName;
+    private String detectedPackage;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        Log.d(TAG, "=== OBB INSTALLER START ===");
+        Log.d(TAG, "================================");
+        Log.d(TAG, "OBB INSTALLER START");
+        Log.d(TAG, "Android SDK: " + Build.VERSION.SDK_INT);
+        Log.d(TAG, "Device: " + Build.MANUFACTURER + " " + Build.MODEL);
+        Log.d(TAG, "================================");
 
-        createUI();
+        createInterface();
 
-        checkStoragePermission();
+        updatePermissionState();
     }
 
-    private void createUI() {
+    // ============================================================
+    // UI
+    // ============================================================
 
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(40, 40, 40, 40);
+    private void createInterface() {
+
+        LinearLayout root = new LinearLayout(this);
+
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(40, 40, 40, 40);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
+
         title.setText("OBB Installer");
         title.setTextSize(28);
         title.setGravity(Gravity.CENTER);
 
-        status = new TextView(this);
-        status.setTextSize(17);
-        status.setPadding(0, 30, 0, 20);
+        root.addView(
+                title,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+
+        statusText = new TextView(this);
+
+        statusText.setTextSize(17);
+        statusText.setPadding(0, 30, 0, 20);
+
+        root.addView(
+                statusText,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+
+        permissionButton = new Button(this);
+
+        permissionButton.setText(
+                "Berikan Akses Semua File"
+        );
+
+        root.addView(
+                permissionButton,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
 
         selectedFileText = new TextView(this);
+
         selectedFileText.setTextSize(16);
+        selectedFileText.setPadding(0, 20, 0, 10);
         selectedFileText.setVisibility(TextView.GONE);
 
+        root.addView(
+                selectedFileText,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+
         packageText = new TextView(this);
+
         packageText.setTextSize(16);
+        packageText.setPadding(0, 10, 0, 20);
         packageText.setVisibility(TextView.GONE);
+
+        root.addView(
+                packageText,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+
+        selectObbButton = new Button(this);
+
+        selectObbButton.setText(
+                "Pilih File OBB"
+        );
+
+        root.addView(
+                selectObbButton,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
+
+        processButton = new Button(this);
+
+        processButton.setText(
+                "Proses Install"
+        );
+
+        processButton.setEnabled(false);
+
+        root.addView(
+                processButton,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
 
         progressBar = new ProgressBar(
                 this,
@@ -86,161 +184,228 @@ public class MainActivity extends Activity {
         progressBar.setProgress(0);
         progressBar.setVisibility(ProgressBar.GONE);
 
+        LinearLayout.LayoutParams progressParams =
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        50
+                );
+
+        progressParams.topMargin = 30;
+
+        root.addView(
+                progressBar,
+                progressParams
+        );
+
         progressText = new TextView(this);
+
         progressText.setTextSize(16);
         progressText.setGravity(Gravity.CENTER);
         progressText.setVisibility(TextView.GONE);
 
-        selectObbButton = new Button(this);
-        selectObbButton.setText("Pilih File OBB");
-        selectObbButton.setEnabled(false);
-
-        processButton = new Button(this);
-        processButton.setText("Proses Install");
-        processButton.setEnabled(false);
-
-        layout.addView(
-                title,
+        root.addView(
+                progressText,
                 new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
                 )
         );
 
-        layout.addView(status);
+        setContentView(root);
 
-        layout.addView(selectedFileText);
-
-        layout.addView(packageText);
-
-        layout.addView(
-                progressBar,
-                new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        50
-                )
+        permissionButton.setOnClickListener(
+                v -> requestStoragePermission()
         );
 
-        layout.addView(progressText);
-
-        layout.addView(selectObbButton);
-
-        layout.addView(processButton);
-
-        setContentView(layout);
-
         selectObbButton.setOnClickListener(
-                v -> selectObb()
+                v -> openObbPicker()
         );
 
         processButton.setOnClickListener(
-                v -> startProcess()
+                v -> startInstall()
         );
     }
 
-    // =========================================================
-    // PERMISSION
-    // =========================================================
+    // ============================================================
+    // STORAGE PERMISSION
+    // ============================================================
 
     private boolean hasStoragePermission() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return Environment.isExternalStorageManager();
+
+            boolean granted =
+                    Environment.isExternalStorageManager();
+
+            Log.d(
+                    TAG,
+                    "MANAGE_EXTERNAL_STORAGE = " + granted
+            );
+
+            return granted;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+            boolean granted =
+                    checkSelfPermission(
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ) == PackageManager.PERMISSION_GRANTED;
+
+            Log.d(
+                    TAG,
+                    "WRITE_EXTERNAL_STORAGE = " + granted
+            );
+
+            return granted;
         }
 
         return true;
     }
 
-    private void checkStoragePermission() {
-
-        Log.d(TAG, "Checking storage permission");
+    private void updatePermissionState() {
 
         if (hasStoragePermission()) {
 
-            Log.d(TAG, "Storage permission: GRANTED");
+            Log.d(
+                    TAG,
+                    "Storage permission GRANTED"
+            );
 
-            showPermissionGranted();
+            statusText.setText(
+                    "✓ Akses penyimpanan sudah diberikan.\n" +
+                    "Pilih file OBB yang ingin dipasang."
+            );
+
+            permissionButton.setText(
+                    "Akses Penyimpanan: AKTIF"
+            );
+
+            permissionButton.setEnabled(false);
+
+            selectObbButton.setEnabled(true);
 
         } else {
 
-            Log.d(TAG, "Storage permission: NOT GRANTED");
+            Log.d(
+                    TAG,
+                    "Storage permission NOT GRANTED"
+            );
 
-            showPermissionDialog();
+            statusText.setText(
+                    "⚠ Akses penyimpanan belum diberikan."
+            );
+
+            permissionButton.setText(
+                    "Berikan Akses Semua File"
+            );
+
+            permissionButton.setEnabled(true);
+
+            selectObbButton.setEnabled(false);
+            processButton.setEnabled(false);
         }
     }
 
-    private void showPermissionDialog() {
-
-        status.setText(
-                "Akses penyimpanan diperlukan."
-        );
-
-        selectObbButton.setEnabled(false);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Izin Penyimpanan Diperlukan")
-                .setMessage(
-                        "OBB Installer membutuhkan akses " +
-                        "penyimpanan untuk mengelola file OBB."
-                )
-                .setCancelable(false)
-                .setNegativeButton(
-                        "Nanti",
-                        null
-                )
-                .setPositiveButton(
-                        "Izinkan",
-                        (dialog, which) ->
-                                openStorageSettings()
-                )
-                .show();
-    }
-
-    private void openStorageSettings() {
+    private void requestStoragePermission() {
 
         Log.d(
                 TAG,
-                "Opening All Files Access settings"
+                "Requesting storage permission"
         );
 
-        try {
-
-            Intent intent = new Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
-            );
-
-            intent.setData(
-                    Uri.parse(
-                            "package:" + getPackageName()
-                    )
-            );
-
-            startActivity(intent);
-
-        } catch (Exception e) {
-
-            Log.e(
-                    TAG,
-                    "App-specific settings failed",
-                    e
-            );
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
 
             try {
 
                 Intent intent = new Intent(
-                        Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
+                );
+
+                intent.setData(
+                        Uri.parse(
+                                "package:" +
+                                getPackageName()
+                        )
                 );
 
                 startActivity(intent);
 
-            } catch (Exception ex) {
+                Log.d(
+                        TAG,
+                        "Opened app-specific All Files Access settings"
+                );
+
+            } catch (Exception e) {
 
                 Log.e(
                         TAG,
-                        "Unable to open storage settings",
-                        ex
+                        "Failed to open app-specific settings",
+                        e
                 );
+
+                try {
+
+                    Intent intent = new Intent(
+                            Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                    );
+
+                    startActivity(intent);
+
+                    Log.d(
+                            TAG,
+                            "Opened global All Files Access settings"
+                    );
+
+                } catch (Exception ex) {
+
+                    Log.e(
+                            TAG,
+                            "Failed to open All Files Access settings",
+                            ex
+                    );
+
+                    Toast.makeText(
+                            this,
+                            "Tidak dapat membuka pengaturan izin.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
             }
+
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+
+            requestPermissions(
+                    new String[]{
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                            Manifest.permission.READ_EXTERNAL_STORAGE
+                    },
+                    REQUEST_STORAGE
+            );
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults
+    ) {
+
+        super.onRequestPermissionsResult(
+                requestCode,
+                permissions,
+                grantResults
+        );
+
+        if (requestCode == REQUEST_STORAGE) {
+
+            Log.d(
+                    TAG,
+                    "Legacy storage permission result"
+            );
+
+            updatePermissionState();
         }
     }
 
@@ -249,53 +414,36 @@ public class MainActivity extends Activity {
 
         super.onResume();
 
-        if (status == null) {
+        if (permissionButton != null) {
+            updatePermissionState();
+        }
+    }
+
+    // ============================================================
+    // PICK OBB FILE
+    // ============================================================
+
+    private void openObbPicker() {
+
+        if (!hasStoragePermission()) {
+
+            Log.d(
+                    TAG,
+                    "Cannot pick OBB: permission missing"
+            );
+
+            requestStoragePermission();
+
             return;
         }
 
-        if (hasStoragePermission()) {
-
-            showPermissionGranted();
-
-        } else {
-
-            status.setText(
-                    "Akses penyimpanan belum diberikan."
-            );
-
-            selectObbButton.setEnabled(false);
-        }
-    }
-
-    private void showPermissionGranted() {
-
         Log.d(
                 TAG,
-                "Storage permission granted"
+                "Opening OBB file picker"
         );
 
-        status.setText(
-                "✓ Akses diberikan.\n" +
-                "Silakan pilih file OBB."
-        );
-
-        selectObbButton.setEnabled(true);
-    }
-
-    // =========================================================
-    // PILIH OBB
-    // =========================================================
-
-    private void selectObb() {
-
-        Log.d(
-                TAG,
-                "Opening OBB picker"
-        );
-
-        Intent intent = new Intent(
-                Intent.ACTION_OPEN_DOCUMENT
-        );
+        Intent intent =
+                new Intent(Intent.ACTION_OPEN_DOCUMENT);
 
         intent.setType("*/*");
 
@@ -312,6 +460,10 @@ public class MainActivity extends Activity {
                 PICK_OBB
         );
     }
+
+    // ============================================================
+    // PICK RESULT
+    // ============================================================
 
     @Override
     protected void onActivityResult(
@@ -335,6 +487,7 @@ public class MainActivity extends Activity {
         );
 
         if (
+                requestCode != PICK_OBB ||
                 resultCode != RESULT_OK ||
                 data == null ||
                 data.getData() == null
@@ -342,44 +495,45 @@ public class MainActivity extends Activity {
 
             Log.d(
                     TAG,
-                    "Picker cancelled"
+                    "OBB picker cancelled"
             );
 
             return;
         }
 
-        Uri uri = data.getData();
-
-        if (requestCode == PICK_OBB) {
-
-            handleObb(uri);
-
-        } else if (requestCode == PICK_OBB_FOLDER) {
-
-            handleObbFolder(uri);
-        }
-    }
-
-    private void handleObb(Uri uri) {
-
-        obbUri = uri;
+        selectedObbUri =
+                data.getData();
 
         Log.d(
                 TAG,
-                "OBB URI = " + uri
+                "Selected URI = " +
+                selectedObbUri
         );
 
-        obbName = getFileName(uri);
+        selectedObbName =
+                getFileName(selectedObbUri);
 
         Log.d(
                 TAG,
-                "OBB NAME = " + obbName
+                "Selected filename = " +
+                selectedObbName
         );
 
         if (
-                obbName == null ||
-                !obbName.toLowerCase().endsWith(".obb")
+                selectedObbName == null ||
+                !selectedObbName
+                        .toLowerCase(Locale.US)
+                        .endsWith(".obb")
         ) {
+
+            Log.e(
+                    TAG,
+                    "Selected file is not OBB"
+            );
+
+            selectedObbUri = null;
+            selectedObbName = null;
+            detectedPackage = null;
 
             selectedFileText.setVisibility(
                     TextView.GONE
@@ -391,60 +545,68 @@ public class MainActivity extends Activity {
 
             processButton.setEnabled(false);
 
-            status.setText(
-                    "File yang dipilih bukan file OBB."
-            );
-
-            Log.e(
-                    TAG,
-                    "Selected file is not OBB"
+            statusText.setText(
+                    "❌ File yang dipilih bukan OBB."
             );
 
             return;
         }
 
-        packageName =
-                extractPackageName(obbName);
+        detectedPackage =
+                extractPackageName(
+                        selectedObbName
+                );
 
-        if (packageName == null) {
+        Log.d(
+                TAG,
+                "Detected package = " +
+                detectedPackage
+        );
+
+        if (
+                detectedPackage == null ||
+                detectedPackage.trim().isEmpty()
+        ) {
+
+            Log.e(
+                    TAG,
+                    "Package detection failed"
+            );
 
             processButton.setEnabled(false);
 
-            status.setText(
-                    "Package tidak dapat dideteksi."
-            );
-
-            Log.e(
-                    TAG,
-                    "Unable to detect package"
+            statusText.setText(
+                    "❌ Package tidak dapat dideteksi dari nama OBB."
             );
 
             return;
         }
 
-        // Tampilkan file yang dipilih
         selectedFileText.setVisibility(
                 TextView.VISIBLE
         );
 
         selectedFileText.setText(
                 "📦 File OBB:\n" +
-                obbName
+                selectedObbName
         );
 
-        // Tampilkan package
         packageText.setVisibility(
                 TextView.VISIBLE
         );
 
         packageText.setText(
                 "📁 Package:\n" +
-                packageName
+                detectedPackage +
+                "\n\n" +
+                "📍 Tujuan otomatis:\n" +
+                "/storage/emulated/0/Android/obb/" +
+                detectedPackage
         );
 
-        status.setText(
-                "File OBB berhasil dipilih.\n" +
-                "Tekan \"Proses Install\" untuk melanjutkan."
+        statusText.setText(
+                "✓ OBB berhasil dipilih.\n" +
+                "Tekan \"Proses Install\" untuk memulai."
         );
 
         processButton.setEnabled(true);
@@ -457,43 +619,63 @@ public class MainActivity extends Activity {
                 TextView.GONE
         );
 
-        Log.d(
-                TAG,
-                "OBB selected successfully"
-        );
+        progressBar.setProgress(0);
 
         Log.d(
                 TAG,
-                "Waiting for user to press Process"
+                "OBB selection complete"
         );
     }
 
-    // =========================================================
-    // PROSES INSTALL
-    // =========================================================
+    // ============================================================
+    // START INSTALL
+    // ============================================================
 
-    private void startProcess() {
+    private void startInstall() {
 
         if (
-                obbUri == null ||
-                obbName == null ||
-                packageName == null
+                selectedObbUri == null ||
+                selectedObbName == null ||
+                detectedPackage == null
         ) {
 
-            status.setText(
-                    "File OBB belum dipilih."
+            Log.e(
+                    TAG,
+                    "Install requested but OBB data missing"
+            );
+
+            statusText.setText(
+                    "Pilih file OBB terlebih dahulu."
             );
 
             return;
         }
 
-        Log.d(
-                TAG,
-                "=== USER PRESSED PROCESS ==="
-        );
+        if (!hasStoragePermission()) {
+
+            Log.e(
+                    TAG,
+                    "Install aborted: storage permission missing"
+            );
+
+            statusText.setText(
+                    "Akses penyimpanan belum diberikan."
+            );
+
+            requestStoragePermission();
+
+            return;
+        }
+
+        Log.d(TAG, "================================");
+        Log.d(TAG, "INSTALL START");
+        Log.d(TAG, "OBB = " + selectedObbName);
+        Log.d(TAG, "PACKAGE = " + detectedPackage);
+        Log.d(TAG, "================================");
 
         processButton.setEnabled(false);
         selectObbButton.setEnabled(false);
+        permissionButton.setEnabled(false);
 
         progressBar.setVisibility(
                 ProgressBar.VISIBLE
@@ -509,524 +691,515 @@ public class MainActivity extends Activity {
                 "0%"
         );
 
-        status.setText(
-                "Pilih folder Android/obb..."
+        statusText.setText(
+                "Mempersiapkan instalasi..."
         );
 
-        selectObbFolder();
+        new Thread(
+                this::performInstall
+        ).start();
     }
 
-    // =========================================================
-    // PILIH ANDROID/OBB
-    // =========================================================
+    // ============================================================
+    // DIRECT FILE INSTALL
+    // ============================================================
 
-    private void selectObbFolder() {
+    private void performInstall() {
 
-        Log.d(
-                TAG,
-                "Opening Android/obb folder picker"
-        );
-
-        Intent intent =
-                new Intent(
-                        Intent.ACTION_OPEN_DOCUMENT_TREE
+        File obbRoot =
+                new File(
+                        Environment.getExternalStorageDirectory(),
+                        "Android/obb"
                 );
 
-        intent.addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION |
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-        );
+        File packageDirectory =
+                new File(
+                        obbRoot,
+                        detectedPackage
+                );
 
-        startActivityForResult(
-                intent,
-                PICK_OBB_FOLDER
-        );
-    }
-
-    private void handleObbFolder(
-            Uri rootUri
-    ) {
+        File destination =
+                new File(
+                        packageDirectory,
+                        selectedObbName
+                );
 
         Log.d(
                 TAG,
-                "Selected OBB root = " +
-                rootUri
+                "External storage = " +
+                Environment.getExternalStorageDirectory()
         );
 
-        int flags =
-                Intent.FLAG_GRANT_READ_URI_PERMISSION |
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+        Log.d(
+                TAG,
+                "OBB root = " +
+                obbRoot.getAbsolutePath()
+        );
+
+        Log.d(
+                TAG,
+                "Package directory = " +
+                packageDirectory.getAbsolutePath()
+        );
+
+        Log.d(
+                TAG,
+                "Destination = " +
+                destination.getAbsolutePath()
+        );
 
         try {
 
-            getContentResolver()
-                    .takePersistableUriPermission(
-                            rootUri,
-                            flags
+            runOnUiThread(() ->
+                    statusText.setText(
+                            "Membuat folder package..."
+                    )
+            );
+
+            // ====================================================
+            // CHECK OBB ROOT
+            // ====================================================
+
+            if (!obbRoot.exists()) {
+
+                Log.d(
+                        TAG,
+                        "OBB root does not exist. Creating..."
+                );
+
+                boolean created =
+                        obbRoot.mkdirs();
+
+                Log.d(
+                        TAG,
+                        "OBB root mkdirs = " +
+                        created
+                );
+            }
+
+            if (!obbRoot.exists()) {
+
+                throw new Exception(
+                        "Folder Android/obb tidak dapat diakses."
+                );
+            }
+
+            // ====================================================
+            // CREATE PACKAGE DIRECTORY
+            // ====================================================
+
+            if (!packageDirectory.exists()) {
+
+                Log.d(
+                        TAG,
+                        "Creating package directory..."
+                );
+
+                boolean created =
+                        packageDirectory.mkdirs();
+
+                Log.d(
+                        TAG,
+                        "Package mkdirs = " +
+                        created
+                );
+            } else {
+
+                Log.d(
+                        TAG,
+                        "Package directory already exists"
+                );
+            }
+
+            if (
+                    !packageDirectory.exists() ||
+                    !packageDirectory.isDirectory()
+            ) {
+
+                throw new Exception(
+                        "Folder package tidak dapat dibuat:\n" +
+                        packageDirectory
+                                .getAbsolutePath()
+                );
+            }
+
+            runOnUiThread(() ->
+                    statusText.setText(
+                            "Folder package siap.\n" +
+                            "Menyalin OBB..."
+                    )
+            );
+
+            // ====================================================
+            // SOURCE STREAM
+            // ====================================================
+
+            InputStream input =
+                    getContentResolver()
+                            .openInputStream(
+                                    selectedObbUri
+                            );
+
+            if (input == null) {
+
+                throw new Exception(
+                        "Tidak dapat membuka file OBB sumber."
+                );
+            }
+
+            // ====================================================
+            // DESTINATION STREAM
+            // ====================================================
+
+            OutputStream output =
+                    new FileOutputStream(
+                            destination,
+                            false
                     );
+
+            long fileSize =
+                    getFileSize(selectedObbUri);
 
             Log.d(
                     TAG,
-                    "Persistable permission granted"
+                    "Source file size = " +
+                    fileSize
             );
+
+            byte[] buffer =
+                    new byte[1024 * 1024];
+
+            long totalCopied = 0;
+
+            int bytesRead;
+
+            try {
+
+                while (
+                        (bytesRead =
+                                input.read(buffer)) != -1
+                ) {
+
+                    output.write(
+                            buffer,
+                            0,
+                            bytesRead
+                    );
+
+                    totalCopied += bytesRead;
+
+                    int progress = 0;
+
+                    if (fileSize > 0) {
+
+                        progress =
+                                (int)
+                                (
+                                        totalCopied * 100L
+                                        / fileSize
+                                );
+
+                        if (progress > 100) {
+                            progress = 100;
+                        }
+                    }
+
+                    final int finalProgress =
+                            progress;
+
+                    final long finalBytes =
+                            totalCopied;
+
+                    runOnUiThread(() -> {
+
+                        progressBar.setProgress(
+                                finalProgress
+                        );
+
+                        progressText.setText(
+                                finalProgress +
+                                "%\n" +
+                                formatBytes(
+                                        finalBytes
+                                ) +
+                                " tersalin"
+                        );
+
+                        statusText.setText(
+                                "Menyalin OBB..."
+                        );
+                    });
+                }
+
+                output.flush();
+
+            } finally {
+
+                try {
+                    input.close();
+                } catch (Exception ignored) {
+                }
+
+                try {
+                    output.close();
+                } catch (Exception ignored) {
+                }
+            }
+
+            Log.d(
+                    TAG,
+                    "Copy finished."
+            );
+
+            Log.d(
+                    TAG,
+                    "Total copied = " +
+                    totalCopied
+            );
+
+            // ====================================================
+            // VERIFY
+            // ====================================================
+
+            if (!destination.exists()) {
+
+                throw new Exception(
+                        "File tujuan tidak ditemukan setelah proses copy."
+                );
+            }
+
+            long destinationSize =
+                    destination.length();
+
+            Log.d(
+                    TAG,
+                    "Destination size = " +
+                    destinationSize
+            );
+
+            if (
+                    fileSize > 0 &&
+                    destinationSize != fileSize
+            ) {
+
+                Log.e(
+                        TAG,
+                        "SIZE MISMATCH"
+                );
+
+                throw new Exception(
+                        "Ukuran file tidak cocok.\n" +
+                        "Sumber: " +
+                        fileSize +
+                        "\nTujuan: " +
+                        destinationSize
+                );
+            }
+
+            // ====================================================
+            // SUCCESS
+            // ====================================================
+
+            Log.d(
+                    TAG,
+                    "================================"
+            );
+
+            Log.d(
+                    TAG,
+                    "INSTALL SUCCESS"
+            );
+
+            Log.d(
+                    TAG,
+                    "Destination = " +
+                    destination.getAbsolutePath()
+            );
+
+            Log.d(
+                    TAG,
+                    "================================"
+            );
+
+            runOnUiThread(() -> {
+
+                progressBar.setProgress(100);
+
+                progressText.setText(
+                        "100% - SELESAI"
+                );
+
+                statusText.setText(
+                        "✓ OBB BERHASIL DIINSTALL\n\n" +
+                        "File:\n" +
+                        selectedObbName +
+                        "\n\n" +
+                        "Package:\n" +
+                        detectedPackage +
+                        "\n\n" +
+                        "Lokasi:\n" +
+                        destination.getAbsolutePath()
+                );
+
+                selectObbButton.setEnabled(true);
+                processButton.setEnabled(false);
+                permissionButton.setEnabled(false);
+
+                Toast.makeText(
+                        MainActivity.this,
+                        "OBB berhasil dipindahkan.",
+                        Toast.LENGTH_LONG
+                ).show();
+            });
 
         } catch (Exception e) {
 
             Log.e(
                     TAG,
-                    "Persistable permission failed",
+                    "================================",
                     e
             );
+
+            Log.e(
+                    TAG,
+                    "INSTALL FAILED"
+            );
+
+            Log.e(
+                    TAG,
+                    "Exception = " +
+                    e.getClass().getName()
+            );
+
+            Log.e(
+                    TAG,
+                    "Message = " +
+                    e.getMessage()
+            );
+
+            runOnUiThread(() -> {
+
+                progressBar.setProgress(0);
+
+                progressText.setText(
+                        "GAGAL"
+                );
+
+                statusText.setText(
+                        "❌ GAGAL MENYALIN OBB\n\n" +
+                        e.getClass()
+                                .getSimpleName() +
+                        "\n\n" +
+                        String.valueOf(
+                                e.getMessage()
+                        )
+                );
+
+                selectObbButton.setEnabled(true);
+                processButton.setEnabled(true);
+                permissionButton.setEnabled(
+                        !hasStoragePermission()
+                );
+
+                Toast.makeText(
+                        MainActivity.this,
+                        "Gagal menyalin OBB.",
+                        Toast.LENGTH_LONG
+                ).show();
+            });
         }
-
-        status.setText(
-                "Mempersiapkan folder package..."
-        );
-
-        installObb(rootUri);
     }
 
-    // =========================================================
-    // INSTALL
-    // =========================================================
+    // ============================================================
+    // GET FILE NAME FROM SELECTED URI
+    // ============================================================
 
-    private void installObb(
-            Uri rootUri
-    ) {
+    private String getFileName(Uri uri) {
 
-        Log.d(
-                TAG,
-                "=== INSTALL START ==="
-        );
+        android.database.Cursor cursor = null;
 
-        Log.d(
-                TAG,
-                "Package = " +
-                packageName
-        );
+        try {
 
-        new Thread(() -> {
-
-            try {
-
-                runOnUiThread(() ->
-                        status.setText(
-                                "Mencari folder package..."
-                        )
-                );
-
-                Uri packageFolder =
-                        findOrCreateFolder(
-                                rootUri,
-                                packageName
-                        );
-
-                if (packageFolder == null) {
-
-                    throw new Exception(
-                            "Folder package gagal dibuat."
-                    );
-                }
-
-                Log.d(
-                        TAG,
-                        "Package folder = " +
-                        packageFolder
-                );
-
-                runOnUiThread(() ->
-                        status.setText(
-                                "Folder package siap.\n" +
-                                "Menyalin OBB..."
-                        )
-                );
-
-                copyObb(packageFolder);
-
-            } catch (Exception e) {
-
-                Log.e(
-                        TAG,
-                        "INSTALL FAILED",
-                        e
-                );
-
-                runOnUiThread(() -> {
-
-                    progressBar.setProgress(0);
-
-                    progressText.setText(
-                            "Gagal"
+            cursor =
+                    getContentResolver().query(
+                            uri,
+                            new String[]{
+                                    "_display_name"
+                            },
+                            null,
+                            null,
+                            null
                     );
 
-                    status.setText(
-                            "❌ GAGAL MENYALIN OBB\n\n" +
-                            e.getClass()
-                                    .getSimpleName() +
-                            "\n\n" +
-                            e.getMessage()
-                    );
+            if (
+                    cursor != null &&
+                    cursor.moveToFirst()
+            ) {
 
-                    processButton.setEnabled(true);
-                    selectObbButton.setEnabled(true);
-                });
+                return cursor.getString(0);
             }
 
-        }).start();
-    }
+        } catch (Exception e) {
 
-    // =========================================================
-    // CREATE PACKAGE FOLDER
-    // =========================================================
+            Log.e(
+                    TAG,
+                    "Failed to get filename",
+                    e
+            );
 
-    private Uri findOrCreateFolder(
-            Uri parentUri,
-            String folderName
-    ) throws Exception {
+        } finally {
 
-        Log.d(
-                TAG,
-                "Searching package folder: " +
-                folderName
-        );
-
-        String parentDocumentId =
-                DocumentsContract
-                        .getTreeDocumentId(
-                                parentUri
-                        );
-
-        Uri childrenUri =
-                DocumentsContract
-                        .buildChildDocumentsUriUsingTree(
-                                parentUri,
-                                parentDocumentId
-                        );
-
-        android.database.Cursor cursor =
-                getContentResolver().query(
-                        childrenUri,
-                        new String[]{
-                                DocumentsContract.Document
-                                        .COLUMN_DOCUMENT_ID,
-
-                                DocumentsContract.Document
-                                        .COLUMN_DISPLAY_NAME,
-
-                                DocumentsContract.Document
-                                        .COLUMN_MIME_TYPE
-                        },
-                        null,
-                        null,
-                        null
-                );
-
-        if (cursor != null) {
-
-            try {
-
-                while (cursor.moveToNext()) {
-
-                    String documentId =
-                            cursor.getString(0);
-
-                    String name =
-                            cursor.getString(1);
-
-                    String mime =
-                            cursor.getString(2);
-
-                    if (
-                            folderName.equals(name) &&
-                            DocumentsContract.Document
-                                    .MIME_TYPE_DIR
-                                    .equals(mime)
-                    ) {
-
-                        Log.d(
-                                TAG,
-                                "Existing package folder found"
-                        );
-
-                        return DocumentsContract
-                                .buildDocumentUriUsingTree(
-                                        parentUri,
-                                        documentId
-                                );
-                    }
-                }
-
-            } finally {
-
+            if (cursor != null) {
                 cursor.close();
             }
         }
 
-        Log.d(
-                TAG,
-                "Creating package folder: " +
-                folderName
-        );
-
-        Uri folder =
-                DocumentsContract.createDocument(
-                        getContentResolver(),
-                        parentUri,
-                        DocumentsContract.Document
-                                .MIME_TYPE_DIR,
-                        folderName
-                );
-
-        if (folder == null) {
-
-            throw new Exception(
-                    "Android menolak pembuatan folder package."
-            );
-        }
-
-        Log.d(
-                TAG,
-                "Package folder created"
-        );
-
-        return folder;
+        return null;
     }
 
-    // =========================================================
-    // COPY OBB + PROGRESS
-    // =========================================================
+    // ============================================================
+    // GET FILE SIZE
+    // ============================================================
 
-    private void copyObb(
-            Uri packageFolder
-    ) throws Exception {
+    private long getFileSize(Uri uri) {
 
-        Log.d(
-                TAG,
-                "=== COPY START ==="
-        );
-
-        Uri destination =
-                DocumentsContract.createDocument(
-                        getContentResolver(),
-                        packageFolder,
-                        "application/octet-stream",
-                        obbName
-                );
-
-        if (destination == null) {
-
-            throw new Exception(
-                    "Android menolak pembuatan file OBB."
-            );
-        }
-
-        Log.d(
-                TAG,
-                "Destination = " +
-                destination
-        );
-
-        InputStream input =
-                getContentResolver()
-                        .openInputStream(
-                                obbUri
-                        );
-
-        if (input == null) {
-
-            throw new Exception(
-                    "Tidak dapat membuka OBB sumber."
-            );
-        }
-
-        OutputStream output =
-                getContentResolver()
-                        .openOutputStream(
-                                destination
-                        );
-
-        if (output == null) {
-
-            input.close();
-
-            throw new Exception(
-                    "Tidak dapat membuka OBB tujuan."
-            );
-        }
-
-        long fileSize =
-                getFileSize(obbUri);
-
-        Log.d(
-                TAG,
-                "Source size = " +
-                fileSize
-        );
-
-        byte[] buffer =
-                new byte[1024 * 1024];
-
-        long total = 0;
-
-        int count;
+        android.database.Cursor cursor = null;
 
         try {
 
-            while (
-                    (count =
-                            input.read(buffer)) != -1
+            cursor =
+                    getContentResolver().query(
+                            uri,
+                            new String[]{
+                                    "_size"
+                            },
+                            null,
+                            null,
+                            null
+                    );
+
+            if (
+                    cursor != null &&
+                    cursor.moveToFirst()
             ) {
 
-                output.write(
-                        buffer,
-                        0,
-                        count
-                );
+                if (!cursor.isNull(0)) {
 
-                total += count;
-
-                int progress = 0;
-
-                if (fileSize > 0) {
-
-                    progress =
-                            (int)
-                            ((total * 100L)
-                                    / fileSize);
-
-                    if (progress > 100) {
-                        progress = 100;
-                    }
+                    return cursor.getLong(0);
                 }
-
-                final int finalProgress =
-                        progress;
-
-                final long finalTotal =
-                        total;
-
-                runOnUiThread(() -> {
-
-                    progressBar.setProgress(
-                            finalProgress
-                    );
-
-                    progressText.setText(
-                            finalProgress +
-                            "%  (" +
-                            formatBytes(
-                                    finalTotal
-                            ) +
-                            ")"
-                    );
-
-                    status.setText(
-                            "Menyalin OBB..."
-                    );
-                });
-
-                Log.d(
-                        TAG,
-                        "COPY " +
-                        progress +
-                        "% - " +
-                        total +
-                        " bytes"
-                );
             }
 
-            output.flush();
+        } catch (Exception e) {
+
+            Log.e(
+                    TAG,
+                    "Failed to get file size",
+                    e
+            );
 
         } finally {
 
-            try {
-                input.close();
-            } catch (Exception ignored) {
-            }
-
-            try {
-                output.close();
-            } catch (Exception ignored) {
-            }
-        }
-
-        Log.d(
-                TAG,
-                "COPY FINISHED"
-        );
-
-        Log.d(
-                TAG,
-                "Total copied = " +
-                total
-        );
-
-        runOnUiThread(() -> {
-
-            progressBar.setProgress(100);
-
-            progressText.setText(
-                    "100% - Selesai"
-            );
-
-            status.setText(
-                    "✓ INSTALL BERHASIL\n\n" +
-                    "File:\n" +
-                    obbName +
-                    "\n\n" +
-                    "Package:\n" +
-                    packageName +
-                    "\n\n" +
-                    "Lokasi:\n" +
-                    "Android/obb/" +
-                    packageName
-            );
-
-            processButton.setEnabled(false);
-            selectObbButton.setEnabled(true);
-        });
-
-        Log.d(
-                TAG,
-                "=== INSTALL SUCCESS ==="
-        );
-    }
-
-    // =========================================================
-    // GET FILE SIZE
-    // =========================================================
-
-    private long getFileSize(
-            Uri uri
-    ) {
-
-        android.database.Cursor cursor =
-                getContentResolver().query(
-                        uri,
-                        new String[]{
-                                DocumentsContract.Document
-                                        .COLUMN_SIZE
-                        },
-                        null,
-                        null,
-                        null
-                );
-
-        if (cursor != null) {
-
-            try {
-
-                if (cursor.moveToFirst()) {
-
-                    if (!cursor.isNull(0)) {
-
-                        return cursor.getLong(0);
-                    }
-                }
-
-            } finally {
-
+            if (cursor != null) {
                 cursor.close();
             }
         }
@@ -1034,45 +1207,93 @@ public class MainActivity extends Activity {
         return -1;
     }
 
-    // =========================================================
-    // PACKAGE DETECTION
-    // =========================================================
+    // ============================================================
+    // DETECT PACKAGE FROM OBB NAME
+    // ============================================================
 
     private String extractPackageName(
             String fileName
     ) {
 
+        if (fileName == null) {
+            return null;
+        }
+
         String name =
-                fileName;
+                fileName.trim();
 
         if (
-                name.toLowerCase()
+                !name
+                        .toLowerCase(Locale.US)
                         .endsWith(".obb")
         ) {
 
-            name =
-                    name.substring(
-                            0,
-                            name.length() - 4
-                    );
+            return null;
         }
+
+        name =
+                name.substring(
+                        0,
+                        name.length() - 4
+                );
+
+        Log.d(
+                TAG,
+                "Parsing OBB name: " +
+                name
+        );
+
+        /*
+         * Format OBB:
+         *
+         * main.<version>.<package>.obb
+         *
+         * atau:
+         *
+         * patch.<version>.<package>.obb
+         *
+         * Contoh:
+         *
+         * main.547389636.com.and.games505.portal_knights.obb
+         *
+         * Hasil:
+         *
+         * com.and.games505.portal_knights
+         */
 
         String[] parts =
                 name.split("\\.");
 
         if (parts.length < 3) {
+
+            Log.e(
+                    TAG,
+                    "Invalid OBB filename"
+            );
+
             return null;
         }
+
+        String type =
+                parts[0];
 
         if (
-                !parts[0].equalsIgnoreCase("main") &&
-                !parts[0].equalsIgnoreCase("patch")
+                !type.equalsIgnoreCase("main") &&
+                !type.equalsIgnoreCase("patch")
         ) {
+
+            Log.e(
+                    TAG,
+                    "OBB type is not main/patch: " +
+                    type
+            );
 
             return null;
         }
 
-        StringBuilder result =
+        // parts[1] = version code
+
+        StringBuilder packageBuilder =
                 new StringBuilder();
 
         for (
@@ -1081,75 +1302,43 @@ public class MainActivity extends Activity {
                 i++
         ) {
 
-            if (result.length() > 0) {
-                result.append(".");
+            if (packageBuilder.length() > 0) {
+                packageBuilder.append(".");
             }
 
-            result.append(parts[i]);
+            packageBuilder.append(
+                    parts[i]
+            );
         }
 
-        String resultString =
-                result.toString();
+        String packageName =
+                packageBuilder.toString();
+
+        if (packageName.isEmpty()) {
+            return null;
+        }
 
         Log.d(
                 TAG,
-                "Detected package = " +
-                resultString
+                "Package detected = " +
+                packageName
         );
 
-        return resultString;
+        return packageName;
     }
 
-    // =========================================================
-    // FILE NAME
-    // =========================================================
+    // ============================================================
+    // FORMAT BYTES
+    // ============================================================
 
-    private String getFileName(
-            Uri uri
-    ) {
-
-        android.database.Cursor cursor =
-                getContentResolver().query(
-                        uri,
-                        new String[]{
-                                "_display_name"
-                        },
-                        null,
-                        null,
-                        null
-                );
-
-        if (cursor != null) {
-
-            try {
-
-                if (cursor.moveToFirst()) {
-
-                    return cursor.getString(0);
-                }
-
-            } finally {
-
-                cursor.close();
-            }
-        }
-
-        return null;
-    }
-
-    // =========================================================
-    // FORMAT SIZE
-    // =========================================================
-
-    private String formatBytes(
-            long bytes
-    ) {
+    private String formatBytes(long bytes) {
 
         if (bytes < 1024) {
+
             return bytes + " B";
         }
 
-        if (bytes < 1024 * 1024) {
+        if (bytes < 1024L * 1024L) {
 
             return String.format(
                     Locale.US,
@@ -1158,16 +1347,13 @@ public class MainActivity extends Activity {
             );
         }
 
-        if (
-                bytes <
-                1024L * 1024L * 1024L
-        ) {
+        if (bytes < 1024L * 1024L * 1024L) {
 
             return String.format(
                     Locale.US,
                     "%.2f MB",
                     bytes /
-                    (1024.0 * 1024.0)
+                            (1024.0 * 1024.0)
             );
         }
 
@@ -1175,7 +1361,9 @@ public class MainActivity extends Activity {
                 Locale.US,
                 "%.2f GB",
                 bytes /
-                (1024.0 * 1024.0 * 1024.0)
+                        (1024.0 *
+                                1024.0 *
+                                1024.0)
         );
     }
 }
