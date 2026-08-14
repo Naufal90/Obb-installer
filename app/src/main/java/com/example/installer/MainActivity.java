@@ -1,6 +1,3 @@
-cd ~/installer-project
-
-cat > app/src/main/java/com/example/installer/MainActivity.java <<'EOF'
 package com.example.installer;
 
 import android.app.Activity;
@@ -764,4 +761,3 @@ public class MainActivity extends Activity {
         }
     }
 }
-EOF
