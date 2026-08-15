@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+dependencies {
+    // Library lainnya...
+    implementation "androidx.documentfile:documentfile:1.0.1"
+}
+
 android {
     namespace 'com.example.obbinstaller'
     compileSdk 35
