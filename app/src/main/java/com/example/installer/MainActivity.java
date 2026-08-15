@@ -5,10 +5,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.ViewGroup;
@@ -17,8 +15,6 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import androidx.annotation.NonNull;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -62,7 +58,7 @@ public class MainActivity extends Activity {
         root.setGravity(Gravity.CENTER_HORIZONTAL);
 
         TextView title = new TextView(this);
-        title.setText("OBB Installer (Legacy)");
+        title.setText("OBB Installer");
         title.setTextSize(28);
         title.setGravity(Gravity.CENTER);
         root.addView(title, new LinearLayout.LayoutParams(
@@ -139,7 +135,7 @@ public class MainActivity extends Activity {
     }
 
     // ============================================================
-    // PERMISSION (Khusus Android 10 / targetSdk 29)
+    // PERMISSION
     // ============================================================
 
     private boolean hasStoragePermission() {
@@ -169,7 +165,7 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_STORAGE) {
             updatePermissionState();
@@ -219,7 +215,7 @@ public class MainActivity extends Activity {
     }
 
     // ============================================================
-    // DIRECT INSTALL USING java.io.File (Otomatis ke Android/obb/)
+    // DIRECT INSTALL
     // ============================================================
 
     private void startInstall() {
@@ -236,7 +232,6 @@ public class MainActivity extends Activity {
     }
 
     private void performInstall() {
-        // Karena targetSdk 29 + requestLegacyExternalStorage, ini 100% work!
         File obbRoot = new File(Environment.getExternalStorageDirectory(), "Android/obb");
         File packageDirectory = new File(obbRoot, detectedPackage);
         File destination = new File(packageDirectory, selectedObbName);
