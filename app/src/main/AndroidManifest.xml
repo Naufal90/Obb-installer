@@ -1,15 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Android 9 (API 28) dan lebih rendah -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
-
-    <!-- All files access: Android 11 (API 30)+ -->
-    <uses-permission
-        android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-
+    <!-- Izin bawaan Android 10 dan di bawahnya -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    
     <application
         android:allowBackup="false"
         android:label="OBB Installer"
