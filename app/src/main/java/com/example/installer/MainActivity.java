@@ -5,19 +5,21 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -33,6 +35,7 @@ public class MainActivity extends Activity {
     private TextView selectedFileText;
     private TextView packageText;
     private TextView progressText;
+    private TextView logTextView; // TextView untuk log
 
     private ProgressBar progressBar;
 
@@ -127,11 +130,40 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ));
 
+        // === AREA LOG ===
+        TextView logTitle = new TextView(this);
+        logTitle.setText("Log Aplikasi:");
+        logTitle.setTextSize(16);
+        logTitle.setPadding(0, 30, 0, 10);
+        root.addView(logTitle);
+
+        ScrollView scrollView = new ScrollView(this);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 600 // Tinggi area log 600px
+        );
+        scrollView.setLayoutParams(scrollParams);
+        scrollView.setBackgroundColor(0xFFEEEEEE);
+
+        logTextView = new TextView(this);
+        logTextView.setTextSize(12);
+        logTextView.setPadding(20, 20, 20, 20);
+        logTextView.setTextColor(0xFF333333);
+        scrollView.addView(logTextView);
+        root.addView(scrollView);
+
         setContentView(root);
 
         permissionButton.setOnClickListener(v -> requestStoragePermission());
         selectObbButton.setOnClickListener(v -> openObbPicker());
         processButton.setOnClickListener(v -> startInstall());
+
+        appendLog("Aplikasi dimulai. OS: " + Build.VERSION.SDK_INT);
+    }
+
+    // Helper untuk menulis ke TextView Log
+    private void appendLog(String msg) {
+        Log.d(TAG, msg);
+        runOnUiThread(() -> logTextView.append("-> " + msg + "\n\n"));
     }
 
     // ============================================================
@@ -139,7 +171,15 @@ public class MainActivity extends Activity {
     // ============================================================
 
     private boolean hasStoragePermission() {
-        return checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        // Cek izin biasa
+        boolean hasWrite = checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        
+        // Cek apakah storage benar-benar bisa ditulis (Paling akurat)
+        boolean canWrite = Environment.getExternalStorageDirectory().canWrite();
+        
+        appendLog("Cek Izin - WRITE_EXTERNAL_STORAGE: " + hasWrite + " | Storage CanWrite: " + canWrite);
+        
+        return hasWrite || canWrite;
     }
 
     private void updatePermissionState() {
@@ -158,16 +198,39 @@ public class MainActivity extends Activity {
     }
 
     private void requestStoragePermission() {
-        requestPermissions(new String[]{
-                Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-        }, REQUEST_STORAGE);
+        appendLog("Meminta izin WRITE_EXTERNAL_STORAGE...");
+        
+        // Untuk Android 11+ ke atas, meski targetSdk 29, kadang butuh intent ke Manage Storage
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                intent.setData(Uri.parse("package:" + getPackageName()));
+                startActivityForResult(intent, REQUEST_STORAGE);
+            } catch (Exception e) {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                startActivityForResult(intent, REQUEST_STORAGE);
+            }
+        } else {
+            requestPermissions(new String[]{
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+            }, REQUEST_STORAGE);
+        }
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_STORAGE) {
+            appendLog("Hasil permintaan izin diterima.");
+            updatePermissionState();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (permissionButton != null) {
             updatePermissionState();
         }
     }
@@ -177,6 +240,7 @@ public class MainActivity extends Activity {
     // ============================================================
 
     private void openObbPicker() {
+        appendLog("Membuka file picker untuk OBB...");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("*/*");
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -187,17 +251,32 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_OBB || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        
+        // Tangani hasil dari pengaturan Manage Storage
+        if (requestCode == REQUEST_STORAGE) {
+            appendLog("Kembali dari pengaturan izin.");
+            updatePermissionState();
+            return;
+        }
+
+        if (requestCode != PICK_OBB || resultCode != RESULT_OK || data == null || data.getData() == null) {
+            appendLog("Pemilihan file OBB dibatalkan.");
+            return;
+        }
 
         selectedObbUri = data.getData();
         selectedObbName = getFileName(selectedObbUri);
+        appendLog("File dipilih: " + selectedObbName);
 
         if (selectedObbName == null || !selectedObbName.toLowerCase(Locale.US).endsWith(".obb")) {
             statusText.setText("❌ File yang dipilih bukan OBB.");
+            appendLog("ERROR: File bukan format .obb");
             return;
         }
 
         detectedPackage = extractPackageName(selectedObbName);
+        appendLog("Package terdeteksi: " + detectedPackage);
+        
         if (detectedPackage == null) {
             statusText.setText("❌ Package tidak terdeteksi.");
             return;
@@ -210,7 +289,7 @@ public class MainActivity extends Activity {
         statusText.setText("✓ OBB siap.\nTekan \"Proses Install\".");
         processButton.setEnabled(true);
         progressBar.setVisibility(ProgressBar.GONE);
-        progressText.setVisibility(ProgressBar.GONE);
+        progressText.setVisibility(TextView.GONE);
         progressBar.setProgress(0);
     }
 
@@ -236,26 +315,39 @@ public class MainActivity extends Activity {
         File packageDirectory = new File(obbRoot, detectedPackage);
         File destination = new File(packageDirectory, selectedObbName);
 
+        appendLog("Path Tujuan: " + destination.getAbsolutePath());
+
         try {
             runOnUiThread(() -> statusText.setText("Membuat folder package..."));
+            appendLog("Membuat folder: " + packageDirectory.getAbsolutePath());
 
-            if (!obbRoot.exists()) obbRoot.mkdirs();
-            if (!packageDirectory.exists()) packageDirectory.mkdirs();
+            if (!obbRoot.exists()) {
+                boolean created = obbRoot.mkdirs();
+                appendLog("Buat folder obb root: " + created);
+            }
+            if (!packageDirectory.exists()) {
+                boolean created = packageDirectory.mkdirs();
+                appendLog("Buat folder package: " + created);
+            }
 
             if (!packageDirectory.exists()) {
                 throw new Exception("Gagal membuat folder: " + packageDirectory.getAbsolutePath());
             }
 
             runOnUiThread(() -> statusText.setText("Menyalin OBB..."));
+            appendLog("Membuka input stream dari URI...");
 
             InputStream input = getContentResolver().openInputStream(selectedObbUri);
             OutputStream output = new FileOutputStream(destination, false);
 
             long fileSize = getFileSize(selectedObbUri);
+            appendLog("Ukuran file sumber: " + formatBytes(fileSize));
+
             byte[] buffer = new byte[1024 * 1024]; // 1MB
             long totalCopied = 0;
             int bytesRead;
 
+            appendLog("Mulai menyalin...");
             while ((bytesRead = input.read(buffer)) != -1) {
                 output.write(buffer, 0, bytesRead);
                 totalCopied += bytesRead;
@@ -277,6 +369,7 @@ public class MainActivity extends Activity {
             output.flush();
             input.close();
             output.close();
+            appendLog("Penyalinan selesai. Total: " + formatBytes(totalCopied));
 
             runOnUiThread(() -> {
                 progressBar.setProgress(100);
@@ -286,9 +379,12 @@ public class MainActivity extends Activity {
                 processButton.setEnabled(false);
                 Toast.makeText(this, "OBB berhasil dipasang otomatis!", Toast.LENGTH_LONG).show();
             });
+            appendLog("INSTALL SUKSES!");
 
         } catch (Exception e) {
             Log.e(TAG, "INSTALL FAILED", e);
+            appendLog("INSTALL GAGAL: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            
             runOnUiThread(() -> {
                 progressBar.setProgress(0);
                 progressText.setText("GAGAL");
