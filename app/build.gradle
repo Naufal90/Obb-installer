@@ -13,8 +13,8 @@ android {
 
     defaultConfig {
         applicationId 'com.example.obbinstaller'
-        minSdk 33
-        targetSdk 35
+        minSdk 24
+        targetSdk 29
         versionCode 1
         versionName '1.0'
     }
